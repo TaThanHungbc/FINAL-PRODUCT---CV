@@ -31,7 +31,7 @@ class PipelineParams:
     # Ngưỡng để coi một thành phần liên thông là chữ số
     digit_min_area_ratio: float = 0.015
     digit_min_height_ratio: float = 0.28
-    digit_center_ratio: float = 0.30
+    digit_center_ratio: float = 0.25
     # Thành phần nhỏ hơn ngưỡng này bị coi là chấm nhiễu
     digit_noise_area_ratio: float = 0.002
     # Khoảng cách tối đa (theo chiều cao ô) để gộp các mảnh của cùng một chữ số

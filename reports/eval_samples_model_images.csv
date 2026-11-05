@@ -1,2 +1,2 @@
-image,grid_found,iou,cell_acc,grid_correct,solve,corrections,solution_correct
-handwritten_01.png,True,,1.0,True,solved,0,True
+image,grid_found,iou,cell_acc,grid_correct,solve,unique,corrections,solution_correct
+handwritten_01.png,True,,1.0,True,solved,True,0,True

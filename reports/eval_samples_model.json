@@ -18,6 +18,7 @@
   "grid_accuracy_after_correction": 1.0,
   "images_auto_corrected": 0,
   "solve_rate": 1.0,
+  "solved_not_unique": 0,
   "solution_correct_rate": 1.0,
   "auto_correct": true
 }

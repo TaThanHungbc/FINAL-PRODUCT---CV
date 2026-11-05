@@ -8,15 +8,17 @@ Giải Sudoku từ ảnh chụp bằng xử lý ảnh cổ điển: OpenCV để
 
 | Độ đo | v1: k-NN, chỉ chữ in | v2: SVM, in + viết tay, có tự sửa |
 |---|---|---|
-| Nhận dạng đúng trên ô có số | 98,95% | 99,31% |
-| Đúng trên toàn bộ 81 ô | 98,95% | 99,60% |
-| Ảnh đúng cả 81 ô (trước tự sửa) | 60,0% | 75,0% |
-| Ảnh đúng cả 81 ô (sau tự sửa) | – | 85,0% |
-| **Ảnh có đáp án đúng** | – | **92,5%** (77,5% nếu tắt tự sửa) |
+| Phát hiện đúng ô có số | 99,1% | 100% |
+| Đúng trên toàn bộ 81 ô | 98,95% | 99,78% |
+| Ảnh đúng cả 81 ô (trước tự sửa) | 60,0% | 87,5% |
+| Ảnh đúng cả 81 ô (sau tự sửa) | – | 95,0% |
+| **Ảnh có đáp án đúng** | – | **100%** (87,5% nếu tắt tự sửa) |
 
-Validation của bộ phân loại: 99,25% trên ô chữ in từ ảnh Sudoku, 98,11% trên chữ viết tay MNIST. Ảnh viết tay bút chì trong `samples/` được giải đúng 100%. Lưu ý: ảnh này cũng đã được dùng khi chọn ngưỡng tách ô, nên chưa phải tập kiểm tra độc lập.
+Validation của bộ phân loại: 99,2% trên ô chữ in từ ảnh Sudoku, 98,1% trên chữ viết tay MNIST. Ảnh viết tay bút chì trong `samples/` được giải đúng.
 
-Chi tiết trong `reports/` (`reports/v1_knn_print/` là kết quả của bản đầu tiên).
+Lưu ý khi đọc số liệu: ngưỡng tách ô được chọn bằng cách dò trên tập train, nhưng lỗi bỏ sót số 7 được phát hiện khi xem ảnh test, và ảnh trong `samples/` cũng được dùng khi chọn ngưỡng. Vì vậy kết quả test hơi lạc quan; cần thêm ảnh tự chụp mới để có đánh giá độc lập.
+
+Bảng so sánh các cấu hình (k-NN/SVM, HOG/pixel thô, nguồn dữ liệu, tăng cường, tự sửa, adaptive/Otsu) ở `reports/experiments.md`. Kết quả của bản đầu tiên ở `reports/v1_knn_print/`.
 
 ## Pipeline
 
@@ -53,6 +55,9 @@ Nên dùng `.venv` cho cả train lẫn đóng gói exe: model `.joblib` phải 
 .venv\Scripts\python scripts\evaluate.py --no-correct     :: tắt bước tự sửa (để so sánh)
 .venv\Scripts\python scripts\evaluate.py --folder samples :: ảnh tự chụp kèm nhãn .dat
 .venv\Scripts\python scripts\evaluate.py --no-model       :: chỉ đánh giá tìm lưới + phát hiện ô trống
+.venv\Scripts\python scripts\experiments.py                :: bảng so sánh cho báo cáo -> reports\experiments.md (~15 phút)
+.venv\Scripts\python scripts\solve.py anh.jpg --stages     :: giải ảnh bất kỳ từ dòng lệnh, ảnh kết quả vào outputs\
+.venv\Scripts\python -m unittest discover tests            :: kiểm thử
 ```
 
 Tuỳ chọn khi train: `--model svm|knn`, `--feature raw`, `--augment 0`, `--no-mnist`, `--no-chars74k`, `--mnist-per-class 2000`.
@@ -65,6 +70,7 @@ Tuỳ chọn khi train: `--model svm|knn`, `--feature raw`, `--augment 0`, `--no
 - `digit_accuracy`, `cell_accuracy`: độ chính xác nhận dạng (trước bước tự sửa)
 - `grid_accuracy`, `grid_accuracy_after_correction`: tỉ lệ ảnh đúng cả 81 ô
 - `solution_correct_rate`: tỉ lệ ảnh có đáp án trùng với đáp án của lưới nhãn thật
+- `solved_not_unique`: số ảnh giải được nhưng đề nhận dạng có nhiều lời giải (thường do bỏ sót số đề bài)
 
 ## Ứng dụng
 
@@ -73,14 +79,15 @@ Tuỳ chọn khi train: `--model svm|knn`, `--feature raw`, `--augment 0`, `--no
 build_exe.bat                  :: đóng gói thành dist\SudokuVision.exe (kèm model nếu đã train)
 ```
 
-- **Mở ảnh…** hoặc **Ảnh mẫu ngẫu nhiên**. Có thể kéo thả ảnh lên file exe.
+- **Mở ảnh…**, **Ảnh mẫu ngẫu nhiên**, hoặc **Webcam…**: xem trước có vẽ khung lưới tìm được, bấm Space để chụp. Có thể kéo thả ảnh lên file exe.
 - Mỗi tab hiển thị một bước của pipeline: Ảnh gốc, Nhị phân, Tìm lưới, Nắn phẳng, Các ô, Nhận dạng, Lời giải.
 - Lưới bên phải: cam = độ tin cậy thấp, tím = ô đã tự sửa, xanh lá = đáp án. Có thể sửa tay rồi bấm **Giải**.
+- Nếu đề nhận dạng được có nhiều hơn một lời giải, app cảnh báo (chữ cam) vì nhiều khả năng đã bỏ sót một số đề bài.
 - Exe chạy độc lập vì model được đóng gói sẵn bên trong. Nếu đặt `models\digit_model.joblib` cạnh exe thì model đó được ưu tiên dùng.
 
 ## Phát hành trên GitHub
 
-Repo không chứa dữ liệu, model và file exe (xem `.gitignore`). Khi đẩy một tag, workflow `.github/workflows/release.yml` sẽ tự tải dữ liệu, train, đánh giá, đóng gói exe, rồi đính kèm `SudokuVision.exe` cùng model vào trang Releases:
+Repo không chứa dữ liệu, model và file exe (xem `.gitignore`). Workflow `tests.yml` chạy kiểm thử mỗi lần đẩy code. Khi đẩy một tag, workflow `.github/workflows/release.yml` sẽ tự tải dữ liệu, train, đánh giá, đóng gói exe, rồi đính kèm `SudokuVision.exe` cùng model vào trang Releases:
 
 ```bat
 git tag v1.0.0
@@ -91,7 +98,8 @@ git push origin v1.0.0
 
 ```
 sudoku_vision/   thư viện pipeline
-scripts/         download_data.py, train.py, evaluate.py
+scripts/         download_data.py, train.py, evaluate.py, experiments.py, solve.py
+tests/           kiểm thử (unittest)
 app.py           giao diện Tkinter
 build_exe.bat    đóng gói PyInstaller
 samples/         ảnh tự chụp kèm nhãn

@@ -133,11 +133,12 @@ class SudokuPipeline:
             res.solve = solver.SolveResult("invalid", None, 0)
             res.message = "Còn ô chưa nhận dạng (?)."
             return res.solve
-        res.solve = solver.solve(given)
+        res.solve = solver.solve(given, check_unique=True)
         if not res.solve.ok and auto_correct and res.proba:
             fix = correction.correct(given, res.classes, res.proba)
             if fix is not None:
-                given, res.solve, res.corrections = fix.grid, fix.result, fix.changes
+                given, res.corrections = fix.grid, fix.changes
+                res.solve = solver.solve(given, check_unique=True)
                 res.grid = given
                 res.stages["recognized"] = overlay.draw_recognized(
                     res.stages["warped"], given, res.confidence, self.p.cell_size,
@@ -153,6 +154,9 @@ class SudokuPipeline:
         if res.corrections:
             fixes = ", ".join(f"({r + 1},{c + 1}): {a or '_'}→{b or '_'}" for r, c, a, b in res.corrections)
             res.message = f"Đã giải sau khi tự sửa {len(res.corrections)} ô theo luật Sudoku: {fixes}."
+        if res.solve.ok and res.solve.unique is False:
+            res.message += (" Lưu ý: đề có nhiều hơn một lời giải, có thể đã bỏ sót một số đề bài;"
+                            " hãy kiểm tra lưới và nhập thêm số còn thiếu.")
         if res.solve.ok:
             res.stages["solution"] = overlay.render_solution(
                 res.work_image, res.matrix, given, res.solve.solution, self.p.warp_size)

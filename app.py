@@ -5,6 +5,7 @@ Chạy từ mã nguồn:  python app.py
 """
 import random
 import sys
+import time
 import traceback
 from pathlib import Path
 import tkinter as tk
@@ -14,7 +15,8 @@ import cv2
 import numpy as np
 from PIL import Image, ImageTk
 
-from sudoku_vision import paths
+from sudoku_vision import grid as gridmod
+from sudoku_vision import paths, preprocess
 from sudoku_vision.classifier import DigitClassifier
 from sudoku_vision.imageio import imread, imwrite
 from sudoku_vision.pipeline import STAGE_TITLES, UNKNOWN, SudokuPipeline
@@ -143,6 +145,71 @@ class SudokuBoard(ttk.Frame):
         self._updating = False
 
 
+class WebcamDialog(tk.Toplevel):
+    """Xem trước webcam, vẽ khung lưới tìm được theo thời gian thực; bấm Chụp (hoặc Space) để lấy ảnh."""
+
+    def __init__(self, master, on_capture, camera_index: int = 0):
+        super().__init__(master)
+        self.title("Chụp từ webcam")
+        self.geometry("860x640")
+        self.on_capture = on_capture
+        self.frame = None
+        self.cap = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW)
+        if not self.cap.isOpened():
+            self.cap = cv2.VideoCapture(camera_index)
+        self.view = ImageView(self, "Đang mở webcam…")
+        self.view.pack(fill="both", expand=True)
+        bar = ttk.Frame(self, padding=8)
+        bar.pack(fill="x")
+        self.hint = ttk.Label(bar, text="Đưa cả lưới Sudoku vào khung hình.", style="Status.TLabel")
+        self.hint.pack(side="left")
+        ttk.Button(bar, text="Đóng", command=self.close).pack(side="right")
+        ttk.Button(bar, text="Chụp (Space)", command=self.capture).pack(side="right", padx=6)
+        self.bind("<space>", lambda e: self.capture())
+        self.bind("<Escape>", lambda e: self.close())
+        self.protocol("WM_DELETE_WINDOW", self.close)
+        self.grab_set()
+        if not self.cap.isOpened():
+            self.view.placeholder = "Không mở được webcam. Kiểm tra camera hoặc quyền truy cập camera của Windows."
+            self.view.redraw()
+            return
+        self.after(30, self.tick)
+
+    def tick(self):
+        if self.cap is None:
+            return
+        ok, frame = self.cap.read()
+        if ok:
+            self.frame = frame
+            # Tìm lưới trên ảnh nhỏ cho nhanh, rồi vẽ khung lên ảnh xem trước
+            small, scale = preprocess.resize_max_side(frame, 480)
+            binary = preprocess.binarize(preprocess.to_gray(small), block=15, c=3, blur_ksize=5)
+            binary = cv2.dilate(binary, np.ones((3, 3), np.uint8))
+            corners, _, _ = gridmod.find_grid(binary, 0.08)
+            preview = frame.copy()
+            if corners is not None:
+                pts = np.round(corners / scale).astype(np.int32)
+                cv2.polylines(preview, [pts], True, (60, 170, 40), 3, cv2.LINE_AA)
+            self.hint.configure(text="Đã thấy lưới: bấm Chụp." if corners is not None
+                                else "Đưa cả lưới Sudoku vào khung hình.")
+            self.view.set_image(preview)
+        self.after(30, self.tick)
+
+    def capture(self):
+        if self.frame is None:
+            return
+        frame = self.frame.copy()
+        self.close()
+        self.on_capture(frame)
+
+    def close(self):
+        if self.cap is not None:
+            self.cap.release()
+            self.cap = None
+        self.grab_release()
+        self.destroy()
+
+
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -151,6 +218,7 @@ class App(tk.Tk):
         self.minsize(980, 620)
         self.pipeline = SudokuPipeline()
         self.result = None
+        self.image = None
         self.image_path = None
         self._build_ui()
         self.after(100, self.load_default_model)
@@ -166,6 +234,7 @@ class App(tk.Tk):
         bar.pack(fill="x")
         ttk.Button(bar, text="Mở ảnh…", command=self.open_image).pack(side="left")
         ttk.Button(bar, text="Ảnh mẫu ngẫu nhiên", command=self.open_sample).pack(side="left", padx=6)
+        ttk.Button(bar, text="Webcam…", command=self.open_webcam).pack(side="left", padx=(0, 6))
         ttk.Button(bar, text="Chạy lại", command=self.run_pipeline).pack(side="left")
         ttk.Separator(bar, orient="vertical").pack(side="left", fill="y", padx=10)
         ttk.Button(bar, text="Chọn model…", command=self.choose_model).pack(side="left")
@@ -227,7 +296,7 @@ class App(tk.Tk):
         extra = f", val acc {acc:.3f}" if isinstance(acc, float) else ""
         self.model_label.configure(text=f"Model: {clf.name.upper()} + {clf.feature.upper()}{extra}")
         self.set_status(f"Đã nạp model {path}")
-        if self.image_path:
+        if self.image is not None:
             self.run_pipeline()
 
     def choose_model(self):
@@ -239,8 +308,7 @@ class App(tk.Tk):
     def open_image(self):
         path = filedialog.askopenfilename(title="Chọn ảnh Sudoku", filetypes=IMAGE_TYPES)
         if path:
-            self.image_path = Path(path)
-            self.run_pipeline()
+            self.open_path(Path(path))
 
     def open_sample(self):
         folder = paths.find_sample_dir()
@@ -248,22 +316,32 @@ class App(tk.Tk):
         if not files:
             messagebox.showinfo(APP_TITLE, "Không thấy ảnh mẫu trong data/raw/v2_test.\nChạy scripts/download_data.py trước.")
             return
-        self.image_path = random.choice(files)
+        self.open_path(random.choice(files))
+
+    def open_path(self, path: Path):
+        # Ảnh trong dataset (có file .dat cạnh bên): bỏ qua thẻ xoay EXIF để khớp nhãn
+        in_dataset = path.suffix.lower() == ".jpg" and path.with_suffix(".dat").exists()
+        image = imread(path, ignore_orientation=in_dataset)
+        if image is None:
+            messagebox.showerror(APP_TITLE, f"Không đọc được ảnh:\n{path}")
+            return
+        self.image, self.image_path = image, path
+        self.run_pipeline()
+
+    def open_webcam(self):
+        WebcamDialog(self, self.on_webcam_capture)
+
+    def on_webcam_capture(self, frame):
+        self.image, self.image_path = frame, Path(f"webcam_{time.strftime('%Y%m%d_%H%M%S')}.png")
         self.run_pipeline()
 
     def run_pipeline(self):
-        if not self.image_path:
-            return
-        # Ảnh trong dataset: bỏ qua thẻ xoay EXIF để khớp nhãn; ảnh người dùng: tôn trọng EXIF
-        in_dataset = self.image_path.with_suffix(".dat").exists()
-        image = imread(self.image_path, ignore_orientation=in_dataset)
-        if image is None:
-            messagebox.showerror(APP_TITLE, f"Không đọc được ảnh:\n{self.image_path}")
+        if self.image is None:
             return
         self.set_status(f"Đang xử lý {self.image_path.name}…")
         self.update_idletasks()
         try:
-            self.result = self.pipeline.run(image)
+            self.result = self.pipeline.run(self.image)
         except Exception:  # noqa: BLE001
             messagebox.showerror(APP_TITLE, traceback.format_exc())
             return
@@ -287,7 +365,8 @@ class App(tk.Tk):
     def show_message(self):
         res = self.result
         ok = bool(res.solve and res.solve.ok)
-        self.message.configure(text=res.message, foreground=COLOR_SOLVED if ok else "#b3261e")
+        color = (COLOR_LOW if res.solve.unique is False else COLOR_SOLVED) if ok else "#b3261e"
+        self.message.configure(text=res.message, foreground=color)
         names = {"preprocess": "Tiền xử lý", "find_grid": "Tìm lưới", "cells": "Nắn + cắt ô",
                  "recognize": "Nhận dạng", "solve": "Giải"}
         lines = [f"{names[k]}: {v * 1000:.0f} ms" for k, v in res.timings.items() if k in names]
@@ -355,8 +434,7 @@ def main():
     app = App()
     # Kéo thả ảnh lên file .exe (hoặc truyền đường dẫn) để mở ngay
     if len(sys.argv) > 1 and Path(sys.argv[1]).is_file():
-        app.image_path = Path(sys.argv[1])
-        app.after(300, app.run_pipeline)
+        app.after(300, lambda: app.open_path(Path(sys.argv[1])))
     app.mainloop()
 
 

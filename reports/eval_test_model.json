@@ -10,14 +10,15 @@
   "grid_iou_over_0.9": 0.95,
   "empty_detection": {
     "empty_recall": 0.9995201535508638,
-    "digit_recall": 0.9965397923875432
+    "digit_recall": 1.0
   },
-  "digit_accuracy": 0.9930555555555556,
-  "cell_accuracy": 0.9959876543209877,
-  "grid_accuracy": 0.75,
-  "grid_accuracy_after_correction": 0.85,
-  "images_auto_corrected": 6,
+  "digit_accuracy": 0.9948096885813149,
+  "cell_accuracy": 0.9978395061728395,
+  "grid_accuracy": 0.875,
+  "grid_accuracy_after_correction": 0.95,
+  "images_auto_corrected": 5,
   "solve_rate": 1.0,
-  "solution_correct_rate": 0.925,
+  "solved_not_unique": 0,
+  "solution_correct_rate": 1.0,
   "auto_correct": true
 }
