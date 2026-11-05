@@ -1,0 +1,9 @@
+numpy>=2.0,<2.5
+# OpenCV 5 đã bỏ cv2.HOGDescriptor khỏi bản opencv-python: giữ ở nhánh 4.x
+opencv-python>=4.10,<5
+# Model .joblib phải được nạp bằng đúng phiên bản scikit-learn đã dùng để train
+scikit-learn>=1.8,<1.9
+joblib>=1.4
+pillow>=10.0
+# chỉ cần khi đóng gói .exe
+pyinstaller>=6.16

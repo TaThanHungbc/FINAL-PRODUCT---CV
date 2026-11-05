@@ -1,0 +1,20 @@
+# Môi trường và file build
+.venv/
+__pycache__/
+*.pyc
+build/
+dist/
+*.spec
+
+# Dữ liệu tải về (chạy scripts/download_data.py), không đưa lên repo
+data/
+
+# Model là file nhị phân lớn: phát hành qua GitHub Releases
+models/
+
+# Ảnh minh hoạ sinh ra khi đánh giá
+reports/vis/
+
+# Tài liệu môn học và ảnh chụp màn hình làm việc
+T13_Gioithieudoan.pdf
+work/

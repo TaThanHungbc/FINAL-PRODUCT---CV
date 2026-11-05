@@ -1,0 +1,23 @@
+{
+  "split": "samples",
+  "images": 1,
+  "model": {
+    "name": "svm",
+    "feature": "hog"
+  },
+  "grid_found_rate": 1.0,
+  "grid_iou_mean": null,
+  "grid_iou_over_0.9": null,
+  "empty_detection": {
+    "empty_recall": 1.0,
+    "digit_recall": 1.0
+  },
+  "digit_accuracy": 1.0,
+  "cell_accuracy": 1.0,
+  "grid_accuracy": 1.0,
+  "grid_accuracy_after_correction": 1.0,
+  "images_auto_corrected": 0,
+  "solve_rate": 1.0,
+  "solution_correct_rate": 1.0,
+  "auto_correct": true
+}

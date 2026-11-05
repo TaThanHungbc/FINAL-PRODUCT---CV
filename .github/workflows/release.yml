@@ -1,0 +1,60 @@
+# Khi đẩy một tag dạng v1.0.0: tải dữ liệu, train, đánh giá, đóng gói exe
+# rồi đính kèm SudokuVision.exe, model và kết quả đánh giá vào GitHub Release.
+name: Build release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Cài thư viện
+        run: |
+          python -m venv .venv
+          .venv\Scripts\python -m pip install --upgrade pip
+          .venv\Scripts\python -m pip install -r requirements.txt
+
+      - name: Tải dữ liệu
+        run: .venv\Scripts\python scripts\download_data.py
+
+      - name: Train
+        run: .venv\Scripts\python scripts\train.py
+
+      - name: Đánh giá
+        run: |
+          .venv\Scripts\python scripts\evaluate.py
+          .venv\Scripts\python scripts\evaluate.py --folder samples
+
+      - name: Đóng gói exe
+        shell: cmd
+        run: build_exe.bat
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SudokuVision
+          path: |
+            dist/SudokuVision.exe
+            models/digit_model.joblib
+            reports/*.json
+
+      - name: Đính kèm vào Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/SudokuVision.exe
+            models/digit_model.joblib
+            reports/eval_test_model.json
+            reports/train_report.json

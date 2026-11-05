@@ -1,0 +1,23 @@
+{
+  "split": "test",
+  "images": 40,
+  "model": {
+    "name": "svm",
+    "feature": "hog"
+  },
+  "grid_found_rate": 1.0,
+  "grid_iou_mean": 0.9490744632102366,
+  "grid_iou_over_0.9": 0.95,
+  "empty_detection": {
+    "empty_recall": 0.9995201535508638,
+    "digit_recall": 0.9965397923875432
+  },
+  "digit_accuracy": 0.9930555555555556,
+  "cell_accuracy": 0.9959876543209877,
+  "grid_accuracy": 0.75,
+  "grid_accuracy_after_correction": 0.75,
+  "images_auto_corrected": 0,
+  "solve_rate": 0.85,
+  "solution_correct_rate": 0.775,
+  "auto_correct": false
+}

@@ -1,0 +1,19 @@
+{
+  "split": "test",
+  "images": 40,
+  "model": {
+    "name": "knn",
+    "feature": "hog"
+  },
+  "grid_found_rate": 1.0,
+  "grid_iou_mean": 0.9490744632102366,
+  "grid_iou_over_0.9": 0.95,
+  "empty_detection": {
+    "empty_recall": 0.9942418426103646,
+    "digit_recall": 0.9913494809688581
+  },
+  "digit_accuracy": 0.9895287958115183,
+  "cell_accuracy": 0.9895061728395061,
+  "grid_accuracy": 0.6,
+  "solve_rate": 0.775
+}
