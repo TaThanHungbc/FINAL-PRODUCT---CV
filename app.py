@@ -13,7 +13,7 @@ from tkinter import filedialog, messagebox, ttk
 
 import cv2
 import numpy as np
-from PIL import Image, ImageTk
+from PIL import Image, ImageGrab, ImageTk
 
 from sudoku_vision import grid as gridmod
 from sudoku_vision import paths, preprocess, review
@@ -24,6 +24,7 @@ from sudoku_vision.user_data import save_cells
 
 APP_TITLE = "Sudoku Vision · CS231"
 IMAGE_TYPES = [("Ảnh", "*.jpg *.jpeg *.png *.bmp *.webp"), ("Tất cả", "*.*")]
+IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff"}
 COLOR_LOW = "#c26a00"
 COLOR_SOLVED = "#2e8b3d"
 COLOR_ERROR = "#b3261e"
@@ -338,6 +339,62 @@ class WebcamDialog(tk.Toplevel):
         self.destroy()
 
 
+class ScrollFrame(ttk.Frame):
+    """Khung có thanh trượt dọc/ngang, thanh trượt chỉ hiện khi nội dung không vừa khung.
+    Đặt widget con vào self.inner."""
+
+    def __init__(self, master, padding=0):
+        super().__init__(master)
+        bg = ttk.Style(self).lookup("TFrame", "background") or None
+        self.canvas = tk.Canvas(self, highlightthickness=0, borderwidth=0, background=bg)
+        self.vbar = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
+        self.hbar = ttk.Scrollbar(self, orient="horizontal", command=self.canvas.xview)
+        self.canvas.configure(yscrollcommand=self.vbar.set, xscrollcommand=self.hbar.set)
+        self.canvas.grid(row=0, column=0, sticky="nsew")
+        self.rowconfigure(0, weight=1)
+        self.columnconfigure(0, weight=1)
+        self.inner = ttk.Frame(self.canvas, padding=padding)
+        self._win = self.canvas.create_window(0, 0, window=self.inner, anchor="nw")
+        self.inner.bind("<Configure>", lambda e: self._update())
+        self.canvas.bind("<Configure>", lambda e: self._update())
+        # Cuộn bằng con lăn chuột khi con trỏ nằm trong khung
+        self.bind_all("<MouseWheel>", self._on_wheel, add="+")
+        self.bind_all("<Shift-MouseWheel>", lambda e: self._on_wheel(e, horizontal=True), add="+")
+
+    def _update(self):
+        need_w, need_h = self.inner.winfo_reqwidth(), self.inner.winfo_reqheight()
+        have_w, have_h = self.canvas.winfo_width(), self.canvas.winfo_height()
+        # Nội dung hẹp hơn khung thì giãn theo chiều ngang của khung
+        self.canvas.itemconfigure(self._win, width=max(need_w, have_w))
+        self.canvas.configure(scrollregion=(0, 0, max(need_w, have_w), need_h))
+        self._toggle(self.vbar, need_h > have_h, row=0, column=1, sticky="ns")
+        self._toggle(self.hbar, need_w > have_w, row=1, column=0, sticky="ew")
+
+    @staticmethod
+    def _toggle(bar, show, **grid_opts):
+        if show and not bar.winfo_ismapped():
+            bar.grid(**grid_opts)
+        elif not show and bar.winfo_ismapped():
+            bar.grid_remove()
+
+    def _contains_pointer(self) -> bool:
+        w = self.winfo_containing(*self.winfo_pointerxy())
+        while w is not None:
+            if w is self:
+                return True
+            w = w.master
+        return False
+
+    def _on_wheel(self, event, horizontal=False):
+        if not self._contains_pointer():
+            return
+        step = -1 if event.delta > 0 else 1
+        if horizontal and self.hbar.winfo_ismapped():
+            self.canvas.xview_scroll(step * 3, "units")
+        elif not horizontal and self.vbar.winfo_ismapped():
+            self.canvas.yview_scroll(step * 3, "units")
+
+
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -361,6 +418,9 @@ class App(tk.Tk):
         bar = ttk.Frame(self, padding=(10, 8))
         bar.pack(fill="x")
         ttk.Button(bar, text="Mở ảnh…", command=self.open_image).pack(side="left")
+        ttk.Button(bar, text="Dán ảnh (Ctrl+V)", command=self.paste_image).pack(side="left", padx=(6, 0))
+        self.bind_all("<Control-v>", self.paste_image)
+        self.bind_all("<Control-V>", self.paste_image)
         ttk.Button(bar, text="Ảnh mẫu ngẫu nhiên", command=self.open_sample).pack(side="left", padx=6)
         ttk.Button(bar, text="Webcam…", command=self.open_webcam).pack(side="left", padx=(0, 6))
         ttk.Button(bar, text="Chạy lại", command=self.run_pipeline).pack(side="left")
@@ -369,6 +429,10 @@ class App(tk.Tk):
         ttk.Button(bar, text="Lưu kết quả…", command=self.save_result).pack(side="left", padx=6)
         self.model_label = ttk.Label(bar, text="Model: đang tìm…", style="Status.TLabel")
         self.model_label.pack(side="right")
+
+        # Thanh trạng thái pack trước để không bị khung chính chiếm hết chỗ khi cửa sổ nhỏ
+        self.status = ttk.Label(self, text="Sẵn sàng.", style="Status.TLabel", padding=(10, 4))
+        self.status.pack(fill="x", side="bottom")
 
         body = ttk.Panedwindow(self, orient="horizontal")
         body.pack(fill="both", expand=True, padx=10, pady=(0, 6))
@@ -381,8 +445,10 @@ class App(tk.Tk):
             self.views[key] = view
         body.add(self.tabs, weight=3)
 
-        side = ttk.Frame(body, padding=(12, 4))
-        body.add(side, weight=1)
+        # Panel bên phải nằm trong khung cuộn: cửa sổ nhỏ thì hiện thanh trượt thay vì cắt mất nội dung
+        side_scroll = ScrollFrame(body, padding=(12, 4))
+        body.add(side_scroll, weight=1)
+        side = side_scroll.inner
         ttk.Label(side, text="Kiểm tra kết quả nhận dạng", font=("Segoe UI", 12, "bold")).pack(anchor="w")
         ttk.Label(side, text="So số ở góc mỗi ô với chữ trong ảnh. Ô sai: chuột phải (hoặc phím X) để đánh dấu, "
                              "rồi bấm Nhận dạng lại (R); vẫn sai thì bấm tiếp để thử lựa chọn kế tiếp. "
@@ -417,9 +483,6 @@ class App(tk.Tk):
         self.message.pack(anchor="w", pady=(6, 4))
         self.timing = ttk.Label(side, text="", wraplength=460, style="Status.TLabel", justify="left")
         self.timing.pack(anchor="w")
-
-        self.status = ttk.Label(self, text="Sẵn sàng.", style="Status.TLabel", padding=(10, 4))
-        self.status.pack(fill="x", side="bottom")
 
     # ---------- model ----------
     def load_default_model(self):
@@ -473,6 +536,27 @@ class App(tk.Tk):
             return
         self.image, self.image_path = image, path
         self.run_pipeline()
+
+    def paste_image(self, event=None):
+        """Ctrl+V: lấy ảnh từ clipboard (ảnh chụp màn hình, ảnh copy từ trình duyệt) hoặc file ảnh đã copy."""
+        try:
+            data = ImageGrab.grabclipboard()
+        except Exception:  # noqa: BLE001  (clipboard đang bị ứng dụng khác giữ, định dạng lạ…)
+            data = None
+        if isinstance(data, list):  # copy file trong Explorer -> danh sách đường dẫn
+            files = [Path(f) for f in data if Path(f).suffix.lower() in IMAGE_EXTS]
+            if files:
+                self.open_path(files[0])
+                return "break"
+            data = None
+        if not isinstance(data, Image.Image):
+            self.set_status("Clipboard không có ảnh. Hãy copy một ảnh (hoặc file ảnh) rồi bấm Ctrl+V.")
+            return "break"
+        rgb = np.asarray(data.convert("RGB"))
+        self.image = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+        self.image_path = Path(f"clipboard_{time.strftime('%Y%m%d_%H%M%S')}.png")
+        self.run_pipeline()
+        return "break"
 
     def open_webcam(self):
         WebcamDialog(self, self.on_webcam_capture)

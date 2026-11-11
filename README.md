@@ -93,6 +93,8 @@ build_exe.bat                  :: đóng gói thành dist\SudokuVision.exe (kèm
 ```
 
 - **Mở ảnh…**, **Ảnh mẫu ngẫu nhiên**, hoặc **Webcam…**: xem trước có vẽ khung lưới tìm được, bấm Space để chụp. Có thể kéo thả ảnh lên file exe.
+- **Dán ảnh (Ctrl+V)**: dán ảnh từ clipboard, ví dụ ảnh chụp màn hình (Win+Shift+S), ảnh copy từ trình duyệt/Zalo, hoặc file ảnh đã copy trong File Explorer.
+- Panel bên phải có thanh trượt khi cửa sổ nhỏ (cuộn bằng con lăn chuột; Shift + con lăn để cuộn ngang).
 - Mỗi tab hiển thị một bước của pipeline: Ảnh gốc, Nhị phân, Tìm lưới, Nắn phẳng, Các ô, Nhận dạng, Lời giải.
 - **Bảng kiểm tra kết quả** bên phải: mỗi ô hiện ảnh ô cắt từ ảnh gốc, số máy đọc được nằm ở góc, nên dễ so ngay chữ trong ảnh với số máy đọc. Màu nhãn: xanh lá = chắc chắn, cam = độ tin cậy thấp, đỏ = trùng số trong hàng/cột/khối, tím = máy tự sửa, xanh dương = người dùng đã sửa hoặc chọn lại. Ô có nét mực nhưng bị coi là trống hiện dấu `?` viền cam. Dòng "Cần kiểm tra" phía trên tóm tắt số ô đáng ngờ.
 - **Sửa ô bị nhận sai:** chuột phải vào ô (hoặc chọn ô rồi bấm X) để đánh dấu, rồi bấm **Nhận dạng lại** (phím R). Ô đánh dấu chuyển sang lựa chọn có xác suất cao kế tiếp của bộ phân loại, ưu tiên lựa chọn làm đề hợp lệ và có lời giải duy nhất, và app giải lại ngay. Vẫn sai thì bấm R lần nữa để thử lựa chọn tiếp theo. Chọn một ô sẽ hiện các lựa chọn của máy kèm xác suất. Biết số đúng thì gõ 1–9; phím 0/Delete để xoá; mũi tên để di chuyển; Enter để giải.
