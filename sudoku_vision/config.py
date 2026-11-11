@@ -42,6 +42,8 @@ class PipelineParams:
 
     # Chỉ coi một ô là nhiễu (trống) khi xác suất lớp 0 đạt ngưỡng này; nếu không thì lấy chữ số tốt nhất
     noise_min_prob: float = 0.7
+    # Thử cả 4 hướng xoay của lưới và chọn hướng đọc được chữ số tự tin nhất
+    auto_rotate: bool = True
     # Tự sửa ô nhận dạng sai bằng luật Sudoku khi đề không giải được
     auto_correct: bool = True
 

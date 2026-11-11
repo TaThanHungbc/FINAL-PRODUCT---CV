@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 import cv2
 import numpy as np
 
-from . import cells, correction, grid, overlay, preprocess, solver
+from . import cells, correction, grid, overlay, preprocess, review, solver
 from .classifier import DigitClassifier, decide
 from .config import PipelineParams
 
@@ -38,6 +38,7 @@ class PipelineResult:
     classes: np.ndarray | None = None
     proba: dict = field(default_factory=dict)  # chỉ số ô -> vector xác suất theo `classes`
     corrections: list = field(default_factory=list)  # (hàng, cột, số cũ, số mới) do bước tự sửa
+    rotation: int = 0  # số độ ảnh bị xoay theo chiều kim đồng hồ so với chiều đọc đúng (0, 90, 180, 270)
     solve: solver.SolveResult | None = None
 
     @property
@@ -71,12 +72,17 @@ class SudokuPipeline:
         if p.grid_dilate_iter:
             binary = cv2.dilate(binary, np.ones((3, 3), np.uint8), iterations=p.grid_dilate_iter)
         corners, chosen, candidates = grid.find_grid(binary, p.min_grid_area_ratio)
-        res.stages["contour"] = overlay.draw_contours(work, candidates, chosen, corners)
         res.timings["preprocess"] = t1 - t0
-        res.timings["find_grid"] = time.perf_counter() - t1
         if corners is None:
+            res.stages["contour"] = overlay.draw_contours(work, candidates, chosen, corners)
+            res.timings["find_grid"] = time.perf_counter() - t1
             res.message = "Không tìm thấy lưới Sudoku trong ảnh."
             return res
+        # 2b. Ảnh có thể bị xoay 90/180/270 độ: chọn hướng mà bộ phân loại đọc chữ số tự tin nhất
+        if self.classifier is not None and p.auto_rotate:
+            corners, res.rotation = self.best_orientation(gray, corners)
+        res.stages["contour"] = overlay.draw_contours(work, candidates, chosen, corners)
+        res.timings["find_grid"] = time.perf_counter() - t1
         res.corners = corners
 
         # 3. Nắn phẳng
@@ -103,7 +109,32 @@ class SudokuPipeline:
             return res
         if do_solve:
             self.solve(res, res.grid, auto_correct=p.auto_correct)
+        if res.rotation:
+            how = "lộn ngược (180°)" if res.rotation == 180 else f"xoay {res.rotation}° theo chiều kim đồng hồ"
+            res.message = f"Ảnh bị {how}, đã tự xoay lại. " + res.message
         return res
+
+    def best_orientation(self, gray: np.ndarray, corners: np.ndarray) -> tuple[np.ndarray, int]:
+        """Thử 4 cách gán góc trên-trái (tương ứng xoay lưới 0/90/180/270 độ). Điểm của mỗi hướng là
+        trung bình log-xác suất của nhãn tốt nhất trên các ô có chữ số, trừ điểm khi có số trùng.
+        Chữ số bị xoay (hoặc lộn ngược) thường được đọc với độ tin cậy thấp hơn hẳn."""
+        p = self.p
+        best_score, best_k = -np.inf, 0
+        for k in range(4):
+            cand = np.roll(corners, -k, axis=0)
+            warped, _ = grid.warp(gray, cand, p.warp_size)
+            digits = cells.split_and_extract(cells.binarize_warped(warped, p), p)
+            idx = [i for i, d in enumerate(digits) if d is not None]
+            if not idx:
+                return corners, 0
+            classes, proba = self.classifier.predict_proba([digits[i] for i in idx])
+            labels, conf = decide(classes, proba, p.noise_min_prob)
+            g = np.zeros((9, 9), np.int32)
+            g.flat[idx] = labels
+            score = float(np.mean(np.log(conf + 1e-6))) - 0.1 * len(review.conflicts(g))
+            if score > best_score:
+                best_score, best_k = score, k
+        return np.roll(corners, -best_k, axis=0), 90 * best_k
 
     def recognize(self, digits):
         """Trả về (lưới, độ tin cậy, các lớp, xác suất theo ô). Lớp 0 (nhiễu) được coi là ô trống."""

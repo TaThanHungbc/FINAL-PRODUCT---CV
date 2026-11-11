@@ -8,7 +8,7 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from sudoku_vision import correction, features, grid, solver  # noqa: E402
+from sudoku_vision import correction, features, grid, review, solver  # noqa: E402
 from sudoku_vision.dataset import read_dat  # noqa: E402
 from sudoku_vision.imageio import imread  # noqa: E402
 from sudoku_vision.pipeline import UNKNOWN, SudokuPipeline  # noqa: E402
@@ -102,6 +102,38 @@ class PipelineTest(unittest.TestCase):
         res = SudokuPipeline(DigitClassifier.load(ROOT / "models" / "digit_model.joblib")).run(imread(SAMPLE))
         self.assertTrue(res.solve.ok)
         self.assertTrue((res.solve.solution == solver.solve(truth).solution).all())
+
+    @unittest.skipUnless((ROOT / "models" / "digit_model.joblib").exists(), "chưa train model")
+    def test_detects_rotation(self):
+        import cv2
+        from sudoku_vision.classifier import DigitClassifier
+        _, truth = read_dat(SAMPLE.with_suffix(".dat"))
+        pipe = SudokuPipeline(DigitClassifier.load(ROOT / "models" / "digit_model.joblib"))
+        for deg, code in ((90, cv2.ROTATE_90_CLOCKWISE), (180, cv2.ROTATE_180)):
+            res = pipe.run(cv2.rotate(imread(SAMPLE), code))
+            self.assertEqual(res.rotation, deg)
+            self.assertTrue((res.solve.solution == solver.solve(truth).solution).all())
+
+
+class ReviewTest(unittest.TestCase):
+    def test_conflicts(self):
+        g = PUZZLE.copy()
+        g[0, 2] = 5  # trùng với số 5 ở ô (0, 0)
+        self.assertEqual(review.conflicts(g), {(0, 0), (0, 2)})
+        self.assertEqual(review.conflicts(PUZZLE), set())
+
+    def test_reconsider_cycles_through_options(self):
+        classes = np.arange(10)
+        grid_ = PUZZLE.copy()
+        grid_[0, 1] = 8  # số 3 bị đọc thành 8; máy xếp hạng 8 > 9 > 3
+        p = np.full(10, 0.01)
+        p[8], p[9], p[3] = 0.6, 0.2, 0.15
+        proba = {1: p / p.sum()}
+        rejected = {1: {8}}
+        # Số 9 bị trùng (hàng 3 cột 2 đã có 9) nên bỏ qua 9, chọn 3 làm đề hợp lệ và có lời giải duy nhất
+        self.assertEqual(review.reconsider(grid_, {1}, classes, proba, rejected), {1: 3})
+        # Ô không có ảnh chữ số thì không có lựa chọn thay thế
+        self.assertEqual(review.reconsider(grid_, {2}, classes, proba, {}), {})
 
 
 if __name__ == "__main__":

@@ -16,20 +16,17 @@ import numpy as np
 from PIL import Image, ImageTk
 
 from sudoku_vision import grid as gridmod
-from sudoku_vision import paths, preprocess
+from sudoku_vision import paths, preprocess, review
 from sudoku_vision.classifier import DigitClassifier
 from sudoku_vision.imageio import imread, imwrite
-from sudoku_vision.pipeline import STAGE_TITLES, UNKNOWN, SudokuPipeline
+from sudoku_vision.pipeline import STAGE_TITLES, SudokuPipeline
 from sudoku_vision.user_data import save_cells
 
 APP_TITLE = "Sudoku Vision · CS231"
 IMAGE_TYPES = [("Ảnh", "*.jpg *.jpeg *.png *.bmp *.webp"), ("Tất cả", "*.*")]
-COLOR_GIVEN = "#1d2126"
 COLOR_LOW = "#c26a00"
-COLOR_EDIT = "#2456c9"
 COLOR_SOLVED = "#2e8b3d"
-COLOR_FIXED = "#8e2a8a"
-LOW_CONF = 0.6
+COLOR_ERROR = "#b3261e"
 
 
 class ImageView(tk.Canvas):
@@ -62,88 +59,218 @@ class ImageView(tk.Canvas):
         self.create_image(w / 2, h / 2, image=self._photo)
 
 
-class SudokuBoard(ttk.Frame):
-    """Lưới 9x9 ô nhập: hiện số nhận dạng được, cho phép sửa tay, hiện đáp án."""
+class ReviewBoard(tk.Canvas):
+    """Lưới 9x9 để rà soát kết quả nhận dạng.
 
-    def __init__(self, master):
-        super().__init__(master)
-        self.vars, self.entries = [], []
-        self.solution_mask = np.zeros((9, 9), bool)
-        self._updating = False
-        vcmd = (self.register(lambda s: s == "" or (len(s) == 1 and s in "123456789")), "%P")
-        for br in range(3):
-            for bc in range(3):
-                box = tk.Frame(self, background="#1d2126", padx=1, pady=1)
-                box.grid(row=br, column=bc, padx=2, pady=2)
-                for r in range(3):
-                    for c in range(3):
-                        var = tk.StringVar()
-                        e = tk.Entry(box, textvariable=var, width=2, justify="center", font=("Segoe UI", 15, "bold"),
-                                     relief="flat", validate="key", validatecommand=vcmd)
-                        e.grid(row=r, column=c, padx=1, pady=1, ipady=3)
-                        self.vars.append((br * 3 + r, bc * 3 + c, var))
-                        self.entries.append(e)
-                        var.trace_add("write", lambda *_, rr=br * 3 + r, cc=bc * 3 + c: self._on_edit(rr, cc))
-        # Sắp lại theo thứ tự hàng để truy cập theo chỉ số r*9+c
-        order = sorted(range(81), key=lambda i: (self.vars[i][0], self.vars[i][1]))
-        self.vars = [self.vars[i][2] for i in order]
-        self.entries = [self.entries[i] for i in order]
+    Mỗi ô hiển thị ảnh ô cắt từ ảnh gốc, kèm nhãn nhỏ ở góc là số máy đọc được, để người dùng so sánh
+    ngay. Ô đáng ngờ được tô màu (độ tin cậy thấp, trùng số, có nét mực nhưng bị coi là trống).
+    Người dùng đánh dấu ô sai (chuột phải hoặc phím X) rồi bấm "Nhận dạng lại": ô đánh dấu chuyển sang
+    lựa chọn kế tiếp của bộ phân loại; bấm tiếp nếu vẫn sai. Cũng có thể gõ thẳng số đúng.
+    """
 
-    def _cell(self, r, c):
-        return self.vars[r * 9 + c], self.entries[r * 9 + c]
+    CELL = 50
+    PAD = 3
 
-    def _on_edit(self, r, c):
-        if self._updating:
-            return
-        # Người dùng sửa một ô: giữ số vừa gõ, xoá các ô đáp án còn lại
-        self.solution_mask[r, c] = False
-        self.clear_solution()
-        self._cell(r, c)[1].configure(foreground=COLOR_EDIT, background="#ffffff")
+    def __init__(self, master, on_change):
+        size = 9 * self.CELL + 2 * self.PAD
+        super().__init__(master, width=size, height=size, background="#ffffff", highlightthickness=0, takefocus=1)
+        self.on_change = on_change
+        self._photo = None
+        self.bind("<Button-1>", self._on_click)
+        self.bind("<Button-3>", self._on_right_click)
+        self.bind("<Double-Button-1>", self._on_right_click)
+        self.bind("<Key>", self._on_key)
+        self.reset(None)
 
-    def set_grid(self, grid, confidence=None, fixed=()):
-        """fixed: các ô (hàng, cột) đã được tự sửa theo luật Sudoku, tô tím."""
-        self._updating = True
-        self.solution_mask[:] = False
-        for r in range(9):
-            for c in range(9):
-                var, e = self._cell(r, c)
-                v = int(grid[r, c]) if grid is not None else 0
-                var.set("" if v <= 0 else str(v))
-                low = confidence is not None and v > 0 and confidence[r, c] < LOW_CONF
-                bg = "#ffe1e1" if v == UNKNOWN else ("#fff1d6" if low else "#ffffff")
-                e.configure(foreground=COLOR_LOW if low else COLOR_GIVEN, background=bg)
-        for r, c in fixed:
-            self._cell(r, c)[1].configure(foreground=COLOR_FIXED, background="#f6e6f5")
-        self._updating = False
+    # ---------- trạng thái ----------
+    def reset(self, result):
+        self.result = result
+        self.values = np.zeros((9, 9), np.int32)
+        self.source = np.full((9, 9), "auto", dtype=object)  # auto | fixed | alt | user
+        self.marked = set()  # chỉ số ô r*9+c
+        self.rejected = {}  # chỉ số ô -> tập nhãn đã bị người dùng bác bỏ
+        self.solution = None
+        self.selected = None
+        self._photo = None
+        if result is not None and result.grid is not None:
+            self.values = result.grid.copy()
+            for r, c, _, _ in result.corrections:
+                self.source[r, c] = "fixed"
+            if "warped" in result.stages:
+                side = 9 * self.CELL
+                gray = cv2.cvtColor(cv2.resize(result.stages["warped"], (side, side)), cv2.COLOR_BGR2GRAY)
+                light = (255 - (255 - gray.astype(np.float32)) * 0.6).astype(np.uint8)  # làm nhạt để nhãn dễ đọc
+                self._photo = ImageTk.PhotoImage(Image.fromarray(light))
+        self.redraw()
 
-    def get_grid(self) -> np.ndarray:
-        g = np.zeros((9, 9), np.int32)
-        for r in range(9):
-            for c in range(9):
-                if not self.solution_mask[r, c]:
-                    v = self._cell(r, c)[0].get()
-                    g[r, c] = int(v) if v else 0
-        return g
+    def grid_values(self) -> np.ndarray:
+        return self.values.copy()
 
-    def show_solution(self, given, solution):
-        self._updating = True
-        for r in range(9):
-            for c in range(9):
-                if given[r, c] == 0:
-                    var, e = self._cell(r, c)
-                    var.set(str(int(solution[r, c])))
-                    e.configure(foreground=COLOR_SOLVED, background="#e9f6ec")
-                    self.solution_mask[r, c] = True
-        self._updating = False
+    def has_alternatives(self, i) -> bool:
+        return self.result is not None and i in self.result.proba
+
+    def set_value(self, i, v, source="user"):
+        self.values.flat[i] = v
+        self.source.flat[i] = source
+        self.marked.discard(i)
+        self.solution = None
+        self.redraw()
+
+    def toggle_mark(self, i):
+        if i in self.marked:
+            self.marked.discard(i)
+        else:
+            self.marked.add(i)
+        self.redraw()
+
+    def clear_marks(self):
+        self.marked.clear()
+        self.redraw()
+
+    def clear_all(self):
+        self.values[:] = 0
+        self.source[:] = "user"
+        self.marked.clear()
+        self.solution = None
+        self.redraw()
+
+    def show_solution(self, solution):
+        self.solution = solution
+        self.redraw()
 
     def clear_solution(self):
-        self._updating = True
-        for r, c in zip(*np.nonzero(self.solution_mask)):
-            var, e = self._cell(r, c)
-            var.set("")
-            e.configure(foreground=COLOR_GIVEN, background="#ffffff")
-        self.solution_mask[:] = False
-        self._updating = False
+        self.solution = None
+        self.redraw()
+
+    def reconsider(self) -> tuple[dict, list]:
+        """Đổi các ô đánh dấu sang lựa chọn kế tiếp. Trả về (thay đổi, các ô không còn lựa chọn)."""
+        res = self.result
+        if res is None or not res.proba:
+            return {}, sorted(self.marked)
+        for i in self.marked:
+            self.rejected.setdefault(i, set()).add(int(self.values.flat[i]))
+        changes = review.reconsider(self.values, self.marked, res.classes, res.proba, self.rejected)
+        for i, v in changes.items():
+            self.values.flat[i] = v
+            self.source.flat[i] = "alt"
+        stuck = sorted(i for i in self.marked if i not in changes)
+        self.solution = None
+        self.redraw()
+        return changes, stuck
+
+    def summary(self) -> review.ReviewSummary:
+        res = self.result
+        if res is None or res.confidence is None:
+            return review.ReviewSummary(conflicts=review.conflicts(np.where(self.values > 0, self.values, 0)))
+        skip = {divmod(i, 9) for i in range(81) if self.source.flat[i] != "auto"}
+        return review.summarize(self.values, res.confidence, res.proba, res.classes, skip)
+
+    def cell_info(self, i) -> str:
+        r, c = divmod(i, 9)
+        v = int(self.values.flat[i])
+        cur = "trống" if v == 0 else ("chưa nhận dạng" if v < 0 else str(v))
+        text = f"Ô hàng {r + 1}, cột {c + 1}: đang là {cur}"
+        if self.has_alternatives(i):
+            opts = review.ranked_options(self.result.classes, self.result.proba[i])[:4]
+            text += " · máy đọc: " + ", ".join(f"{k if k else 'trống'} {p:.0%}" for k, p in opts)
+        else:
+            text += " · ô không có nét mực, chỉ sửa được bằng cách gõ số"
+        if self.rejected.get(i):
+            text += " · đã loại: " + ", ".join(str(k) if k else "trống" for k in sorted(self.rejected[i]))
+        return text
+
+    # ---------- vẽ ----------
+    def _xy(self, r, c):
+        return self.PAD + c * self.CELL, self.PAD + r * self.CELL
+
+    def redraw(self):
+        self.delete("all")
+        cs, pad = self.CELL, self.PAD
+        if self._photo is not None:
+            self.create_image(pad, pad, image=self._photo, anchor="nw")
+        s = self.summary()
+        low, missed = set(s.low_confidence), set(s.maybe_missed)
+        for i in range(81):
+            r, c = divmod(i, 9)
+            x, y = self._xy(r, c)
+            v = int(self.values[r, c])
+            if (r, c) in s.conflicts:
+                self.create_rectangle(x + 1, y + 1, x + cs - 1, y + cs - 1, fill="#fde2e1", outline="", stipple="gray50")
+            if v != 0:
+                src = self.source[r, c]
+                if (r, c) in s.conflicts:
+                    fill = "#c5221f"
+                elif src in ("user", "alt"):
+                    fill = "#2456c9"
+                elif src == "fixed":
+                    fill = "#8e2a8a"
+                elif v < 0 or (r, c) in low:
+                    fill = "#d56e00"
+                else:
+                    fill = "#2e7d32"
+                self.create_rectangle(x + 2, y + 2, x + 22, y + 22, fill=fill, outline="")
+                self.create_text(x + 12, y + 12, text="?" if v < 0 else str(v), fill="white",
+                                 font=("Segoe UI", 11, "bold"))
+            elif self.solution is not None:
+                self.create_text(x + cs / 2, y + cs / 2, text=str(int(self.solution[r, c])), fill="#2e8b3d",
+                                 font=("Segoe UI", 18, "bold"))
+            elif (r, c) in missed:
+                self.create_rectangle(x + 2, y + 2, x + 22, y + 22, fill="#ffffff", outline="#d56e00", dash=(2, 2))
+                self.create_text(x + 12, y + 12, text="?", fill="#d56e00", font=("Segoe UI", 11, "bold"))
+            if i in self.marked:
+                self.create_rectangle(x + 3, y + 3, x + cs - 3, y + cs - 3, outline="#c5221f", width=3)
+                self.create_text(x + cs - 9, y + cs - 10, text="✗", fill="#c5221f", font=("Segoe UI", 11, "bold"))
+        for k in range(10):
+            w = 2 if k % 3 == 0 else 1
+            color = "#1d2126" if k % 3 == 0 else "#9aa1a9"
+            self.create_line(pad + k * cs, pad, pad + k * cs, pad + 9 * cs, fill=color, width=w)
+            self.create_line(pad, pad + k * cs, pad + 9 * cs, pad + k * cs, fill=color, width=w)
+        if self.selected is not None:
+            r, c = divmod(self.selected, 9)
+            x, y = self._xy(r, c)
+            self.create_rectangle(x + 1, y + 1, x + cs - 1, y + cs - 1, outline="#2456c9", width=2)
+        self.on_change(s)
+
+    # ---------- tương tác ----------
+    def _cell_at(self, event):
+        c = (event.x - self.PAD) // self.CELL
+        r = (event.y - self.PAD) // self.CELL
+        return r * 9 + c if 0 <= r < 9 and 0 <= c < 9 else None
+
+    def _on_click(self, event):
+        self.focus_set()
+        i = self._cell_at(event)
+        if i is not None:
+            self.selected = i
+            self.redraw()
+
+    def _on_right_click(self, event):
+        self.focus_set()
+        i = self._cell_at(event)
+        if i is not None:
+            self.selected = i
+            self.toggle_mark(i)
+
+    def _on_key(self, event):
+        if self.selected is None:
+            self.selected = 0
+        i = self.selected
+        r, c = divmod(i, 9)
+        key = event.keysym
+        moves = {"Up": (-1, 0), "Down": (1, 0), "Left": (0, -1), "Right": (0, 1)}
+        if key in moves:
+            dr, dc = moves[key]
+            self.selected = ((r + dr) % 9) * 9 + (c + dc) % 9
+            self.redraw()
+        elif event.char in "123456789" and event.char:
+            self.set_value(i, int(event.char))
+        elif key in ("0", "Delete", "BackSpace", "period"):
+            self.set_value(i, 0)
+        elif key.lower() in ("x", "m"):
+            self.toggle_mark(i)
+        else:
+            return None
+        return "break"
 
 
 class WebcamDialog(tk.Toplevel):
@@ -256,22 +383,39 @@ class App(tk.Tk):
 
         side = ttk.Frame(body, padding=(12, 4))
         body.add(side, weight=1)
-        ttk.Label(side, text="Lưới nhận dạng", font=("Segoe UI", 12, "bold")).pack(anchor="w")
-        ttk.Label(side, text="Sửa ô sai rồi bấm Giải. Cam: độ tin cậy thấp · Tím: đã tự sửa theo luật Sudoku · "
-                             "Đỏ: chưa nhận dạng · Xanh lá: đáp án.",
-                  wraplength=330, style="Status.TLabel").pack(anchor="w", pady=(2, 8))
-        self.board = SudokuBoard(side)
+        ttk.Label(side, text="Kiểm tra kết quả nhận dạng", font=("Segoe UI", 12, "bold")).pack(anchor="w")
+        ttk.Label(side, text="So số ở góc mỗi ô với chữ trong ảnh. Ô sai: chuột phải (hoặc phím X) để đánh dấu, "
+                             "rồi bấm Nhận dạng lại (R); vẫn sai thì bấm tiếp để thử lựa chọn kế tiếp. "
+                             "Biết số đúng thì gõ 1–9, phím 0/Delete để xoá.",
+                  wraplength=460, style="Status.TLabel").pack(anchor="w", pady=(2, 4))
+        legend = ttk.Frame(side)
+        legend.pack(anchor="w", pady=(0, 4))
+        for color, text in (("#2e7d32", "chắc chắn"), ("#d56e00", "nghi ngờ"), ("#c5221f", "trùng số"),
+                            ("#8e2a8a", "máy tự sửa"), ("#2456c9", "đã sửa/chọn lại")):
+            tk.Label(legend, text="  ", background=color).pack(side="left", padx=(0, 3))
+            ttk.Label(legend, text=text, style="Status.TLabel").pack(side="left", padx=(0, 10))
+        self.review_label = ttk.Label(side, text="", wraplength=460, font=("Segoe UI", 10, "bold"))
+        self.review_label.pack(anchor="w", pady=(0, 4))
+        self.board = ReviewBoard(side, self.on_board_change)
         self.board.pack(anchor="w")
+        self.board.bind("<KeyPress-r>", lambda e: self.reconsider_marked())
+        self.board.bind("<Return>", lambda e: self.solve_from_board())
+        self.cell_label = ttk.Label(side, text="", wraplength=460, style="Status.TLabel")
+        self.cell_label.pack(anchor="w", pady=(4, 0))
         btns = ttk.Frame(side)
-        btns.pack(anchor="w", pady=10)
-        ttk.Button(btns, text="Giải", command=self.solve_from_board).pack(side="left")
-        ttk.Button(btns, text="Xoá đáp án", command=self.board.clear_solution).pack(side="left", padx=6)
-        ttk.Button(btns, text="Xoá lưới", command=lambda: self.board.set_grid(np.zeros((9, 9), int))).pack(side="left")
-        ttk.Button(side, text="Lưu làm dữ liệu train", command=self.save_training_cells).pack(anchor="w")
+        btns.pack(anchor="w", pady=(8, 4))
+        ttk.Button(btns, text="Nhận dạng lại ô đánh dấu (R)", command=self.reconsider_marked).pack(side="left")
+        ttk.Button(btns, text="Bỏ đánh dấu", command=self.board.clear_marks).pack(side="left", padx=6)
+        ttk.Button(btns, text="Giải (Enter)", command=self.solve_from_board).pack(side="left")
+        btns2 = ttk.Frame(side)
+        btns2.pack(anchor="w")
+        ttk.Button(btns2, text="Xoá đáp án", command=self.board.clear_solution).pack(side="left")
+        ttk.Button(btns2, text="Xoá lưới", command=self.board.clear_all).pack(side="left", padx=6)
+        ttk.Button(btns2, text="Lưu làm dữ liệu train", command=self.save_training_cells).pack(side="left")
 
-        self.message = ttk.Label(side, text="", wraplength=330, font=("Segoe UI", 10, "bold"))
+        self.message = ttk.Label(side, text="", wraplength=460, font=("Segoe UI", 10, "bold"))
         self.message.pack(anchor="w", pady=(6, 4))
-        self.timing = ttk.Label(side, text="", wraplength=330, style="Status.TLabel", justify="left")
+        self.timing = ttk.Label(side, text="", wraplength=460, style="Status.TLabel", justify="left")
         self.timing.pack(anchor="w")
 
         self.status = ttk.Label(self, text="Sẵn sàng.", style="Status.TLabel", padding=(10, 4))
@@ -354,9 +498,9 @@ class App(tk.Tk):
         res = self.result
         for key, view in self.views.items():
             view.set_image(res.stages.get(key))
-        self.board.set_grid(res.grid, res.confidence, [(r, c) for r, c, _, _ in res.corrections])
+        self.board.reset(res)
         if res.solve and res.solve.ok:
-            self.board.show_solution(res.grid, res.solve.solution)
+            self.board.show_solution(res.solve.solution)
             self.tabs.select(self.views["solution"])
         elif res.grid_found:
             self.tabs.select(self.views["recognized"])
@@ -367,7 +511,7 @@ class App(tk.Tk):
     def show_message(self):
         res = self.result
         ok = bool(res.solve and res.solve.ok)
-        color = (COLOR_LOW if res.solve.unique is False else COLOR_SOLVED) if ok else "#b3261e"
+        color = (COLOR_LOW if res.solve.unique is False else COLOR_SOLVED) if ok else COLOR_ERROR
         self.message.configure(text=res.message, foreground=color)
         names = {"preprocess": "Tiền xử lý", "find_grid": "Tìm lưới", "cells": "Nắn + cắt ô",
                  "recognize": "Nhận dạng", "solve": "Giải"}
@@ -380,22 +524,63 @@ class App(tk.Tk):
         if self.result is None or not self.result.grid_found:
             messagebox.showinfo(APP_TITLE, "Hãy mở một ảnh có lưới Sudoku trước.")
             return
-        given = self.board.get_grid()
+        given = self.board.grid_values()
         self.board.clear_solution()
         # Lưới người dùng đã xem/sửa: giải đúng như nhập, không tự sửa nữa
         solve = self.pipeline.solve(self.result, given, auto_correct=False)
         self.views["solution"].set_image(self.result.stages.get("solution"))
         if solve.ok:
-            self.board.show_solution(given, solve.solution)
+            self.board.show_solution(solve.solution)
             self.tabs.select(self.views["solution"])
         self.show_message()
+
+    def reconsider_marked(self):
+        if not self.board.marked:
+            messagebox.showinfo(APP_TITLE, "Chưa có ô nào được đánh dấu.\n\n"
+                                "Chuột phải vào ô bị nhận sai (hoặc chọn ô rồi bấm X), sau đó bấm Nhận dạng lại.")
+            return
+        changes, stuck = self.board.reconsider()
+        parts = [f"({i // 9 + 1},{i % 9 + 1}) → {v or 'trống'}" for i, v in sorted(changes.items())]
+        text = "Đã thử lựa chọn kế tiếp: " + ", ".join(parts) + "." if parts else ""
+        if stuck:
+            cells = ", ".join(f"({i // 9 + 1},{i % 9 + 1})" for i in stuck)
+            text += f" Ô {cells} không còn lựa chọn nào khác: hãy gõ số đúng."
+        self.set_status(text)
+        if self.result is not None and self.result.grid_found and changes:
+            self.solve_from_board()
+            if self.result.solve and self.result.solve.ok:
+                self.message.configure(text="Đã giải với các lựa chọn mới. Nếu ô đánh dấu nay đã đúng thì bỏ đánh dấu; "
+                                       "nếu vẫn sai, bấm Nhận dạng lại lần nữa.", foreground=COLOR_SOLVED)
+
+    def on_board_change(self, summary: review.ReviewSummary):
+        """Cập nhật dòng tóm tắt các ô đáng ngờ và thông tin ô đang chọn."""
+        if not hasattr(self, "board"):  # lần vẽ đầu tiên khi bảng đang được tạo
+            return
+        parts = []
+        if summary.conflicts:
+            parts.append(f"{len(summary.conflicts)} ô trùng số (đỏ)")
+        if summary.low_confidence:
+            parts.append(f"{len(summary.low_confidence)} ô độ tin cậy thấp (cam)")
+        if summary.maybe_missed:
+            parts.append(f"{len(summary.maybe_missed)} ô có nét mực nhưng bị coi là trống (?)")
+        if self.board.marked:
+            parts.append(f"{len(self.board.marked)} ô đang đánh dấu sai")
+        if self.result is None:
+            text, color = "", COLOR_SOLVED
+        elif parts:
+            text, color = "Cần kiểm tra: " + "; ".join(parts) + ".", COLOR_LOW
+        else:
+            text, color = "Không thấy dấu hiệu nhận dạng sai, nhưng vẫn nên so lại với ảnh.", COLOR_SOLVED
+        self.review_label.configure(text=text, foreground=color)
+        sel = self.board.selected
+        self.cell_label.configure(text="" if sel is None or self.result is None else self.board.cell_info(sel))
 
     def save_training_cells(self):
         """Lưu các ô đã cắt với nhãn theo lưới hiện tại (đã sửa tay) để lần train sau học nét chữ này."""
         if self.result is None or not self.result.digits:
             messagebox.showinfo(APP_TITLE, "Hãy mở một ảnh có lưới Sudoku trước.")
             return
-        grid = self.board.get_grid()
+        grid = self.board.grid_values()
         n_cells = sum(d is not None for d in self.result.digits)
         if not messagebox.askyesno(APP_TITLE, f"Lưu {n_cells} ô với nhãn theo lưới bên phải?\n\n"
                                    "Hãy chắc chắn mọi số đề bài trên lưới đã đúng: ô nào lưới để trống "

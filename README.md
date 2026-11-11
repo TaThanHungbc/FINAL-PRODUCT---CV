@@ -16,6 +16,8 @@ Tỉ lệ ảnh giải ra **đáp án đúng** (pipeline đầy đủ, có bư�
 
 Độ chính xác trên từng ô chữ số (validation): chữ in 99,4%, MNIST 98,5%, ô viết tay tổng hợp 97,6%.
 
+Ảnh đầu vào bị xoay: khi xoay ảnh 90°, 180° hoặc 270°, bản trước giải đúng 0%. Nhờ bước chọn hướng, 40/40 ảnh test chữ in và ảnh viết tay tự chụp đều được nhận đúng hướng và giải đúng ở cả 4 hướng; 30 ảnh viết tay tổng hợp đầu tiên giải đúng 25–27/30 ở mỗi hướng (26/30 khi không xoay). Bước này làm thời gian xử lý tăng từ khoảng 0,1 lên 0,35 giây mỗi ảnh.
+
 Những thay đổi ở v3 để nhận dạng chữ viết tay tốt hơn:
 - **Ảnh Sudoku viết tay tổng hợp để train:** `make_synthetic.py --split train` viết các đề bài bằng chữ số MNIST lên lưới giấy, mô phỏng bút chì/bút bi, chụp nghiêng, mờ, nhiễu, nén JPEG. Các ô được cắt bằng chính pipeline nên dữ liệu train giống hệt những gì bộ phân loại nhìn thấy khi chạy thật.
 - **Xoá đoạn kẻ lưới còn sót trong ô:** trước đây các mảnh hình chữ L của đường kẻ bị lấy làm mẫu "nhiễu" (lớp 0), khiến số 2, 7, 1 viết tay hay bị nhận thành ô trống. Số mẫu nhiễu giả giảm từ 280 xuống 46.
@@ -34,6 +36,7 @@ Bảng so sánh các cấu hình (k-NN/SVM, HOG/pixel thô, nguồn dữ liệu,
 | 1. Tiền xử lý | `preprocess.py` | Thu nhỏ, ảnh xám, Gaussian blur, adaptive threshold (hoặc Otsu) |
 | 2. Tìm lưới | `grid.py` | Giãn nét, contour lớn nhất, `approxPolyDP` lấy 4 góc |
 | 3. Nắn phẳng | `grid.py` | `getPerspectiveTransform` + `warpPerspective` về 450×450 |
+| 3b. Chọn hướng | `pipeline.py` | Ảnh xoay 90/180/270°: thử 4 cách gán góc trên-trái, chọn hướng mà bộ phân loại đọc chữ số tự tin nhất và ít trùng số nhất |
 | 4. Cắt ô | `cells.py` | Chia 81 ô, xoá viền và đoạn kẻ lưới còn sót, connected components, gộp các mảnh nét bị đứt, chuẩn hoá 28×28 |
 | 5. Nhận dạng | `features.py`, `classifier.py` | HOG (324 chiều), SVM 10 lớp (0 = nhiễu, 1–9) |
 | 6. Giải | `solver.py` | Backtracking + MRV, bitmask |
@@ -91,7 +94,9 @@ build_exe.bat                  :: đóng gói thành dist\SudokuVision.exe (kèm
 
 - **Mở ảnh…**, **Ảnh mẫu ngẫu nhiên**, hoặc **Webcam…**: xem trước có vẽ khung lưới tìm được, bấm Space để chụp. Có thể kéo thả ảnh lên file exe.
 - Mỗi tab hiển thị một bước của pipeline: Ảnh gốc, Nhị phân, Tìm lưới, Nắn phẳng, Các ô, Nhận dạng, Lời giải.
-- Lưới bên phải: cam = độ tin cậy thấp, tím = ô đã tự sửa, xanh lá = đáp án. Có thể sửa tay rồi bấm **Giải**.
+- **Bảng kiểm tra kết quả** bên phải: mỗi ô hiện ảnh ô cắt từ ảnh gốc, số máy đọc được nằm ở góc, nên dễ so ngay chữ trong ảnh với số máy đọc. Màu nhãn: xanh lá = chắc chắn, cam = độ tin cậy thấp, đỏ = trùng số trong hàng/cột/khối, tím = máy tự sửa, xanh dương = người dùng đã sửa hoặc chọn lại. Ô có nét mực nhưng bị coi là trống hiện dấu `?` viền cam. Dòng "Cần kiểm tra" phía trên tóm tắt số ô đáng ngờ.
+- **Sửa ô bị nhận sai:** chuột phải vào ô (hoặc chọn ô rồi bấm X) để đánh dấu, rồi bấm **Nhận dạng lại** (phím R). Ô đánh dấu chuyển sang lựa chọn có xác suất cao kế tiếp của bộ phân loại, ưu tiên lựa chọn làm đề hợp lệ và có lời giải duy nhất, và app giải lại ngay. Vẫn sai thì bấm R lần nữa để thử lựa chọn tiếp theo. Chọn một ô sẽ hiện các lựa chọn của máy kèm xác suất. Biết số đúng thì gõ 1–9; phím 0/Delete để xoá; mũi tên để di chuyển; Enter để giải.
+- Ảnh bị xoay 90/180/270° được tự xoay lại; app báo hướng xoay trong dòng kết quả.
 - Nếu đề nhận dạng được có nhiều hơn một lời giải, app cảnh báo (chữ cam) vì nhiều khả năng đã bỏ sót một số đề bài.
 - **Lưu làm dữ liệu train:** khi model đọc sai nét chữ của bạn, sửa lưới cho đúng rồi bấm nút này. Các ô được lưu vào `data\user_digits\<số>\` (ô để trống trên lưới được lưu là nhiễu). Chạy lại `scripts\train.py` để model học thêm; các ô này được nhân bản tăng cường 6 lần vì thường rất ít.
 - Exe chạy độc lập vì model được đóng gói sẵn bên trong. Nếu đặt `models\digit_model.joblib` cạnh exe thì model đó được ưu tiên dùng.
