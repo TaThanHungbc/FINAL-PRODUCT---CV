@@ -28,3 +28,9 @@ def find_model() -> Path | None:
 def find_sample_dir() -> Path | None:
     dirs = _candidates("data", "raw", "v2_test") + _candidates("samples")
     return next((p for p in dirs if p.is_dir()), None)
+
+
+def user_digits_dir() -> Path:
+    """Nơi app lưu ô chữ số người dùng đã xác nhận: data/user_digits của dự án nếu có, không thì cạnh exe."""
+    existing = next((p for p in _candidates("data") if p.is_dir()), None)
+    return (existing or app_dir() / "data") / "user_digits"

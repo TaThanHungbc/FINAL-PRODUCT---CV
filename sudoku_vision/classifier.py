@@ -23,6 +23,19 @@ def build_model(name: str):
     raise ValueError(f"Model không hỗ trợ: {name}")
 
 
+def decide(classes: np.ndarray, proba: np.ndarray, noise_min_prob: float = 0.0):
+    """Chọn nhãn từ ma trận xác suất. Lớp 0 (nhiễu) chỉ được chọn khi xác suất >= noise_min_prob,
+    nếu không thì lấy chữ số có xác suất cao nhất: bỏ sót một số đề bài làm hỏng cả đề, còn một
+    "chữ số" thừa từ vết bẩn vẫn có thể được bước tự sửa bằng luật Sudoku loại bỏ."""
+    idx = proba.argmax(axis=1)
+    if noise_min_prob and 0 in classes:
+        noise = classes == 0
+        digit_idx = np.flatnonzero(~noise)[proba[:, ~noise].argmax(axis=1)]
+        weak = noise[idx] & (proba[np.arange(len(idx)), idx] < noise_min_prob)
+        idx = np.where(weak, digit_idx, idx)
+    return classes[idx], proba[np.arange(len(idx)), idx]
+
+
 class DigitClassifier:
     def __init__(self, model, feature: str = "hog", meta: dict | None = None):
         self.model = model
@@ -41,12 +54,12 @@ class DigitClassifier:
         x = features.extract(digits, self.feature)
         return classes, self.model.predict_proba(x).astype(np.float32)
 
-    def predict(self, digits) -> tuple[np.ndarray, np.ndarray]:
-        """Trả về (nhãn, độ tin cậy) cho từng ảnh chữ số."""
+    def predict(self, digits, noise_min_prob: float = 0.0) -> tuple[np.ndarray, np.ndarray]:
+        """Trả về (nhãn, độ tin cậy) cho từng ảnh chữ số. Xem `decide` về noise_min_prob."""
         classes, proba = self.predict_proba(digits)
         if len(proba) == 0:
             return np.zeros(0, np.int32), np.zeros(0, np.float32)
-        return classes[proba.argmax(axis=1)], proba.max(axis=1)
+        return decide(classes, proba, noise_min_prob)
 
     @property
     def name(self) -> str:

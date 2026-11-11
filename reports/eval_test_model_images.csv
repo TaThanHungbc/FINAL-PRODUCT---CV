@@ -1,6 +1,6 @@
 image,grid_found,iou,cell_acc,grid_correct,solve,unique,corrections,solution_correct
 image18.jpg,True,0.9734,1.0,True,solved,True,0,True
-image25.jpg,True,0.9697,0.9753,False,solved,True,2,True
+image25.jpg,True,0.9697,0.9877,False,solved,True,1,True
 image31.jpg,True,0.9697,1.0,True,solved,True,0,True
 image32.jpg,True,0.973,1.0,True,solved,True,0,True
 image34.jpg,True,0.9787,1.0,True,solved,True,0,True
@@ -14,8 +14,8 @@ image73.jpg,True,0.9764,1.0,True,solved,True,0,True
 image83.jpg,True,0.9723,1.0,True,solved,True,0,True
 image85.jpg,True,0.9746,1.0,True,solved,True,0,True
 image91.jpg,True,0.9754,1.0,True,solved,True,0,True
-image114.jpg,True,0.9739,0.9877,False,solved,True,1,True
-image117.jpg,True,0.9745,0.9877,False,solved,True,1,True
+image114.jpg,True,0.9739,1.0,True,solved,True,0,True
+image117.jpg,True,0.9745,1.0,True,solved,True,0,True
 image120.jpg,True,0.9718,1.0,True,solved,True,0,True
 image126.jpg,True,0.9708,1.0,True,solved,True,0,True
 image140.jpg,True,0.9741,1.0,True,solved,True,0,True
@@ -30,12 +30,12 @@ image205.jpg,True,0.9719,1.0,True,solved,True,0,True
 image208.jpg,True,0.9742,1.0,True,solved,True,0,True
 image210.jpg,True,0.9789,1.0,True,solved,True,0,True
 image211.jpg,True,0.9668,1.0,True,solved,True,0,True
-image1005.jpg,True,0.9911,1.0,True,solved,True,0,True
+image1005.jpg,True,0.9911,0.9753,False,solved,True,2,True
 image1009.jpg,True,0.9921,1.0,True,solved,True,0,True
 image1019.jpg,True,0.9849,1.0,True,solved,True,0,True
-image1024.jpg,True,0.4061,1.0,True,solved,True,0,True
+image1024.jpg,True,0.4061,0.9877,False,solved,True,1,True
 image1041.jpg,True,0.4551,1.0,True,solved,True,0,True
 image1072.jpg,True,0.9903,1.0,True,solved,True,0,True
-image1073.jpg,True,0.9829,0.9877,False,solved,True,1,True
+image1073.jpg,True,0.9829,1.0,True,solved,True,0,True
 image1080.jpg,True,0.9927,1.0,True,solved,True,0,True
 image1088.jpg,True,0.9819,0.9753,False,solved,True,2,True

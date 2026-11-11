@@ -20,6 +20,7 @@ from sudoku_vision import paths, preprocess
 from sudoku_vision.classifier import DigitClassifier
 from sudoku_vision.imageio import imread, imwrite
 from sudoku_vision.pipeline import STAGE_TITLES, UNKNOWN, SudokuPipeline
+from sudoku_vision.user_data import save_cells
 
 APP_TITLE = "Sudoku Vision · CS231"
 IMAGE_TYPES = [("Ảnh", "*.jpg *.jpeg *.png *.bmp *.webp"), ("Tất cả", "*.*")]
@@ -266,6 +267,7 @@ class App(tk.Tk):
         ttk.Button(btns, text="Giải", command=self.solve_from_board).pack(side="left")
         ttk.Button(btns, text="Xoá đáp án", command=self.board.clear_solution).pack(side="left", padx=6)
         ttk.Button(btns, text="Xoá lưới", command=lambda: self.board.set_grid(np.zeros((9, 9), int))).pack(side="left")
+        ttk.Button(side, text="Lưu làm dữ liệu train", command=self.save_training_cells).pack(anchor="w")
 
         self.message = ttk.Label(side, text="", wraplength=330, font=("Segoe UI", 10, "bold"))
         self.message.pack(anchor="w", pady=(6, 4))
@@ -387,6 +389,23 @@ class App(tk.Tk):
             self.board.show_solution(given, solve.solution)
             self.tabs.select(self.views["solution"])
         self.show_message()
+
+    def save_training_cells(self):
+        """Lưu các ô đã cắt với nhãn theo lưới hiện tại (đã sửa tay) để lần train sau học nét chữ này."""
+        if self.result is None or not self.result.digits:
+            messagebox.showinfo(APP_TITLE, "Hãy mở một ảnh có lưới Sudoku trước.")
+            return
+        grid = self.board.get_grid()
+        n_cells = sum(d is not None for d in self.result.digits)
+        if not messagebox.askyesno(APP_TITLE, f"Lưu {n_cells} ô với nhãn theo lưới bên phải?\n\n"
+                                   "Hãy chắc chắn mọi số đề bài trên lưới đã đúng: ô nào lưới để trống "
+                                   "sẽ được lưu là nhiễu (lớp 0)."):
+            return
+        root = paths.user_digits_dir()
+        count = save_cells(self.result.digits, grid, root)
+        messagebox.showinfo(APP_TITLE, f"Đã lưu {count} ô vào\n{root}\n\n"
+                            "Chạy lại scripts\\train.py để model học thêm các mẫu này.")
+        self.set_status(f"Đã lưu {count} ô vào {root}")
 
     def save_result(self):
         if self.result is None:

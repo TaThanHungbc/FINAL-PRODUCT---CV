@@ -6,7 +6,7 @@ import cv2
 import numpy as np
 
 from . import cells, correction, grid, overlay, preprocess, solver
-from .classifier import DigitClassifier
+from .classifier import DigitClassifier, decide
 from .config import PipelineParams
 
 UNKNOWN = -1  # ô có chữ số nhưng chưa có model để nhận dạng
@@ -117,8 +117,7 @@ class SudokuPipeline:
             conf.flat[idx] = 0
             return g, conf, None, {}
         classes, proba = self.classifier.predict_proba([digits[i] for i in idx])
-        g.flat[idx] = classes[proba.argmax(axis=1)]
-        conf.flat[idx] = proba.max(axis=1)
+        g.flat[idx], conf.flat[idx] = decide(classes, proba, self.p.noise_min_prob)
         return g, conf, classes, dict(zip(idx, proba))
 
     def solve(self, res: PipelineResult, given: np.ndarray, auto_correct: bool = True) -> solver.SolveResult:
@@ -134,8 +133,11 @@ class SudokuPipeline:
             res.message = "Còn ô chưa nhận dạng (?)."
             return res.solve
         res.solve = solver.solve(given, check_unique=True)
-        if not res.solve.ok and auto_correct and res.proba:
-            fix = correction.correct(given, res.classes, res.proba)
+        if auto_correct and res.proba and (not res.solve.ok or res.solve.unique is False):
+            # Ưu tiên cách sửa cho ra đề có đúng một lời giải; nếu đề gốc vô nghiệm thì chấp nhận cách sửa bất kỳ
+            fix = correction.correct(given, res.classes, res.proba, require_unique=True)
+            if fix is None and not res.solve.ok:
+                fix = correction.correct(given, res.classes, res.proba)
             if fix is not None:
                 given, res.corrections = fix.grid, fix.changes
                 res.solve = solver.solve(given, check_unique=True)

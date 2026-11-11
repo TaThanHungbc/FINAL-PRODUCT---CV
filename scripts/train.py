@@ -4,6 +4,8 @@ Dữ liệu train:
 - Ô cắt từ ảnh train của wichtounet/sudoku_dataset (chữ in thật + mẫu nhiễu lớp 0)
 - Chars74K EnglishFnt (chữ in nhiều font), nếu có data/chars74k
 - MNIST (chữ viết tay), nếu có data/mnist
+- Ô cắt từ ảnh Sudoku viết tay tổng hợp (data/synthetic_hw_train, tạo bằng make_synthetic.py --split train)
+- Ô chữ số người dùng lưu từ app (data/user_digits), nếu có
 
 Validation tách riêng theo miền: ô từ 20% số ảnh Sudoku giữ lại (chia theo ảnh, không theo ô)
 và MNIST t10k (viết tay). Model tốt nhất được train lại trên toàn bộ dữ liệu rồi lưu.
@@ -26,6 +28,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from sudoku_vision.classifier import MODEL_NAMES, DigitClassifier, build_model  # noqa: E402
+from sudoku_vision.config import PipelineParams  # noqa: E402
 from sudoku_vision.features import FEATURES  # noqa: E402
 from sudoku_vision.training import load_training_data  # noqa: E402
 
@@ -37,7 +40,12 @@ def main():
     ap.add_argument("--mnist", default=str(ROOT / "data" / "mnist"))
     ap.add_argument("--no-chars74k", action="store_true")
     ap.add_argument("--no-mnist", action="store_true")
-    ap.add_argument("--mnist-per-class", type=int, default=1000)
+    ap.add_argument("--mnist-per-class", type=int, default=1500)
+    ap.add_argument("--synthetic", default=str(ROOT / "data" / "synthetic_hw_train"))
+    ap.add_argument("--no-synthetic", action="store_true")
+    ap.add_argument("--user-digits", default=str(ROOT / "data" / "user_digits"),
+                    help="ô chữ số lưu từ app (nút Lưu làm dữ liệu train)")
+    ap.add_argument("--no-user-digits", action="store_true")
     ap.add_argument("--model", default="all", choices=[*MODEL_NAMES, "all"])
     ap.add_argument("--feature", default="hog", choices=list(FEATURES))
     ap.add_argument("--augment", type=int, default=2, help="số bản tăng cường cho mỗi ô Sudoku (0 = tắt)")
@@ -50,7 +58,11 @@ def main():
     print("1) Chuẩn bị dữ liệu")
     data = load_training_data(args.data, None if args.no_chars74k else args.chars74k,
                               None if args.no_mnist else args.mnist, args.mnist_per_class,
-                              args.val_size, args.limit)
+                              args.val_size, args.limit, None if args.no_user_digits else args.user_digits,
+                              None if args.no_synthetic else args.synthetic, ROOT / "data" / "synthetic_hw")
+    if not args.no_synthetic and "synthetic" not in data.extras:
+        print("   (Chưa có ảnh viết tay tổng hợp: chạy scripts/make_synthetic.py --split train để nhận dạng"
+              " chữ viết tay tốt hơn)")
     sources = ("sudoku", *data.extras)
     x_tr, y_tr = data.train_set(sources, args.augment)
     print(f"   Tập train: {len(x_tr)} mẫu, số mẫu theo lớp: {np.bincount(y_tr, minlength=10).tolist()}")
@@ -63,7 +75,7 @@ def main():
         clf = DigitClassifier(build_model(name), args.feature, {"name": name}).fit(x_tr, y_tr)
         res = {"train_seconds": round(time.perf_counter() - t, 1)}
         for vname, (vd, vl) in data.val_sets.items():
-            pred, _ = clf.predict(vd)
+            pred, _ = clf.predict(vd, PipelineParams().noise_min_prob)
             res[vname] = accuracy_score(vl, pred)
             if vname == "sudoku_print":
                 res["sudoku_print_confusion"] = confusion_matrix(vl, pred, labels=range(10)).tolist()

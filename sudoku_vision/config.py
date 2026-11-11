@@ -34,9 +34,14 @@ class PipelineParams:
     digit_center_ratio: float = 0.25
     # Thành phần nhỏ hơn ngưỡng này bị coi là chấm nhiễu
     digit_noise_area_ratio: float = 0.002
+    # Đoạn kẻ lưới còn sót: nét thẳng dài >= line_len_ratio * cạnh ô nằm trong dải sát mép (0 = tắt)
+    line_len_ratio: float = 0.7
+    line_band_ratio: float = 0.3
     # Khoảng cách tối đa (theo chiều cao ô) để gộp các mảnh của cùng một chữ số
     digit_merge_gap_ratio: float = 0.06
 
+    # Chỉ coi một ô là nhiễu (trống) khi xác suất lớp 0 đạt ngưỡng này; nếu không thì lấy chữ số tốt nhất
+    noise_min_prob: float = 0.7
     # Tự sửa ô nhận dạng sai bằng luật Sudoku khi đề không giải được
     auto_correct: bool = True
 

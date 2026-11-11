@@ -1,6 +1,7 @@
 """Dùng luật Sudoku để sửa lỗi nhận dạng.
 
-Khi đề nhận dạng được bị trùng số hoặc không giải được, thử thay một vài ô kém tin cậy nhất
+Khi đề nhận dạng được bị trùng số, không giải được, hoặc có nhiều lời giải (thường do một số đề bài
+bị nhận nhầm thành nhiễu), thử thay một vài ô kém tin cậy nhất
 bằng lựa chọn tốt thứ hai, thứ ba của bộ phân loại (kể cả "ô trống"). Các tổ hợp được thử theo
 thứ tự tổng log-xác suất giảm dần, và dừng ở tổ hợp đầu tiên cho ra đề giải được.
 """
@@ -31,8 +32,9 @@ def has_duplicates(grid: np.ndarray) -> bool:
 
 def correct(grid: np.ndarray, classes: np.ndarray, proba: dict[int, np.ndarray],
             max_cells: int = 10, max_changes: int = 3, alternatives: int = 2,
-            max_trials: int = 2000, max_nodes: int = 20_000) -> Correction | None:
-    """proba: chỉ số ô (r*9+c) -> vector xác suất trên `classes` (lớp 0 = trống/nhiễu)."""
+            max_trials: int = 2000, max_nodes: int = 20_000, require_unique: bool = False) -> Correction | None:
+    """proba: chỉ số ô (r*9+c) -> vector xác suất trên `classes` (lớp 0 = trống/nhiễu).
+    require_unique: chỉ nhận tổ hợp cho ra đề có đúng một lời giải."""
     eps = 1e-4
     # Các ô kém tin cậy nhất là ứng viên để sửa
     cells = sorted(proba, key=lambda i: proba[i].max())[:max_cells]
@@ -60,8 +62,8 @@ def correct(grid: np.ndarray, classes: np.ndarray, proba: dict[int, np.ndarray],
         g.flat[list(chosen)] = values
         if has_duplicates(g):
             continue
-        res = solver.solve(g, max_nodes=max_nodes)
-        if res.ok:
+        res = solver.solve(g, max_nodes=max_nodes, check_unique=require_unique)
+        if res.ok and (not require_unique or res.unique):
             changes = [(i // 9, i % 9, int(grid.flat[i]), v) for i, v in zip(chosen, values)]
             return Correction(g, res, changes, trials)
     return None

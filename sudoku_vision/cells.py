@@ -11,6 +11,24 @@ def binarize_warped(warped_gray: np.ndarray, p: PipelineParams) -> np.ndarray:
                                  cv2.THRESH_BINARY_INV, p.cell_thresh_block | 1, p.cell_thresh_c)
 
 
+def remove_grid_lines(inner: np.ndarray, p: PipelineParams) -> np.ndarray:
+    """Xoá đoạn kẻ lưới còn sót trong ô (khi lưới nắn hơi lệch): nét ngang dài ở dải trên/dưới
+    và nét dọc dài ở dải trái/phải. Nét chữ số nằm giữa ô nên không bị ảnh hưởng."""
+    h, w = inner.shape
+    length = max(3, int(p.line_len_ratio * h))
+    band = int(p.line_band_ratio * h)
+    horiz = cv2.morphologyEx(inner, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (length, 1)))
+    vert = cv2.morphologyEx(inner, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (1, length)))
+    lines = np.zeros_like(inner)
+    lines[:band] |= horiz[:band]
+    lines[-band:] |= horiz[-band:]
+    lines[:, :band] |= vert[:, :band]
+    lines[:, -band:] |= vert[:, -band:]
+    if not lines.any():
+        return inner
+    return cv2.subtract(inner, cv2.dilate(lines, np.ones((3, 3), np.uint8)))
+
+
 def extract_digit(cell: np.ndarray, p: PipelineParams) -> np.ndarray | None:
     """Tìm chữ số trong một ô nhị phân. Trả về ảnh cắt sát chữ số, hoặc None nếu ô trống."""
     h, w = cell.shape
@@ -20,6 +38,8 @@ def extract_digit(cell: np.ndarray, p: PipelineParams) -> np.ndarray | None:
     inner[-m:, :] = 0
     inner[:, :m] = 0
     inner[:, -m:] = 0
+    if p.line_len_ratio:
+        inner = remove_grid_lines(inner, p)
 
     n, labels, stats, centroids = cv2.connectedComponentsWithStats(inner, connectivity=8)
     lo, hi = p.digit_center_ratio, 1 - p.digit_center_ratio

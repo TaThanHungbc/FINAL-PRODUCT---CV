@@ -1,7 +1,8 @@
 """Chạy các thí nghiệm so sánh cho báo cáo và xuất bảng kết quả.
 
 Mỗi cấu hình được train trên phần train của ảnh Sudoku (+ nguồn bổ sung) rồi đánh giá trên:
-validation chữ in, MNIST viết tay, 40 ảnh test của dataset và ảnh tự chụp trong samples/.
+validation chữ in, MNIST viết tay, 40 ảnh test của dataset, 60 ảnh Sudoku viết tay tổng hợp
+(data/synthetic_hw) và ảnh tự chụp trong samples/.
 
     python scripts/experiments.py            # ~10-15 phút
     python scripts/experiments.py --quick    # bỏ các cấu hình SVM dữ liệu lớn
@@ -25,17 +26,19 @@ from sudoku_vision.evaluation import evaluate_samples  # noqa: E402
 from sudoku_vision.pipeline import SudokuPipeline  # noqa: E402
 from sudoku_vision.training import load_training_data  # noqa: E402
 
-ALL = ("sudoku", "chars74k", "mnist")
+ALL = ("sudoku", "chars74k", "mnist", "synthetic")
+NO_SYN = ("sudoku", "chars74k", "mnist")
 CONFIGS = [
     # (tên, model, đặc trưng, nguồn dữ liệu, số bản tăng cường)
     ("k-NN + HOG, chỉ ô Sudoku", "knn", "hog", ("sudoku",), 2),
     ("SVM + HOG, chỉ ô Sudoku", "svm", "hog", ("sudoku",), 2),
     ("SVM + pixel thô, đủ dữ liệu", "svm", "raw", ALL, 2),
     ("k-NN + HOG, đủ dữ liệu", "knn", "hog", ALL, 2),
+    ("SVM + HOG, không có ảnh viết tay tổng hợp", "svm", "hog", NO_SYN, 2),
     ("SVM + HOG, đủ dữ liệu, không tăng cường", "svm", "hog", ALL, 0),
     ("SVM + HOG, đủ dữ liệu (model chính)", "svm", "hog", ALL, 2),
 ]
-QUICK = {0, 1, 3}
+QUICK = {0, 1, 4}
 
 
 def pct(x):
@@ -49,8 +52,11 @@ def main():
     ap.add_argument("--out", default=str(ROOT / "reports"))
     args = ap.parse_args()
 
-    data = load_training_data(args.data, ROOT / "data" / "chars74k" / "English" / "Fnt", ROOT / "data" / "mnist")
+    data = load_training_data(args.data, ROOT / "data" / "chars74k" / "English" / "Fnt", ROOT / "data" / "mnist",
+                              synthetic=ROOT / "data" / "synthetic_hw_train",
+                              synthetic_val=ROOT / "data" / "synthetic_hw")
     test = load_split(args.data, "test")
+    syn_test = load_folder(ROOT / "data" / "synthetic_hw")
     own = load_folder(ROOT / "samples")
     outlines = load_outlines(Path(args.data) / "outlines_sorted.csv")
 
@@ -64,7 +70,7 @@ def main():
         row = {"config": name, "model": model, "feature": feature, "sources": list(sources), "augment": copies,
                "train_samples": len(x), "train_seconds": round(time.perf_counter() - t, 1)}
         for vname, (vd, vl) in data.val_sets.items():
-            row[vname] = accuracy_score(vl, clf.predict(vd)[0])
+            row[vname] = accuracy_score(vl, clf.predict(vd, PipelineParams().noise_min_prob)[0])
         for correct in (False, True):
             pipe = SudokuPipeline(clf, PipelineParams(auto_correct=correct))
             m, _, _ = evaluate_samples(pipe, test, outlines)
@@ -72,6 +78,9 @@ def main():
             row["test_cell_acc"] = m["cell_accuracy"]
             row["test_grid_acc"] = m["grid_accuracy"]
             row["test_solution" + suffix] = m["solution_correct_rate"]
+        if syn_test:
+            m, _, _ = evaluate_samples(SudokuPipeline(clf), syn_test, ignore_orientation=False)
+            row["synthetic_solution"] = m["solution_correct_rate"]
         if own:
             m, _, _ = evaluate_samples(SudokuPipeline(clf), own, ignore_orientation=False)
             row["samples_cell_acc"] = m["cell_accuracy"]
@@ -92,17 +101,19 @@ def main():
                                                      ensure_ascii=False), encoding="utf-8")
     lines = [
         "# Kết quả thực nghiệm", "",
-        f"Tập test: {len(test)} ảnh của wichtounet/sudoku_dataset V2. Ảnh tự chụp: {len(own)} ảnh trong samples/.", "",
+        f"Tập test: {len(test)} ảnh của wichtounet/sudoku_dataset V2. Viết tay tổng hợp: {len(syn_test)} ảnh "
+        f"(data/synthetic_hw). Ảnh tự chụp: {len(own)} ảnh trong samples/.", "",
         "## Bộ phân loại", "",
-        "| Cấu hình | Mẫu train | Val chữ in | MNIST viết tay | Test: đúng theo ô | Test: ảnh đúng 81 ô "
-        "| Test: đáp án đúng | + tự sửa | Ảnh tự chụp: đáp án đúng |",
-        "|---|---|---|---|---|---|---|---|---|",
+        "Độ chính xác trên ô: validation chữ in, MNIST, ô viết tay tổng hợp. Đáp án đúng: tỉ lệ ảnh giải đúng.", "",
+        "| Cấu hình | Mẫu train | Ô chữ in | Ô MNIST | Ô viết tay tổng hợp | Test: ảnh đúng 81 ô "
+        "| Test: đáp án đúng | + tự sửa | Viết tay tổng hợp: đáp án đúng | Ảnh tự chụp: đáp án đúng |",
+        "|---|---|---|---|---|---|---|---|---|---|",
     ]
     for r in results:
         lines.append(f"| {r['config']} | {r['train_samples']} | {pct(r['sudoku_print'])} | "
-                     f"{pct(r.get('mnist_handwritten'))} | {pct(r['test_cell_acc'])} | {pct(r['test_grid_acc'])} | "
-                     f"{pct(r['test_solution'])} | {pct(r['test_solution_correct'])} | "
-                     f"{pct(r.get('samples_solution'))} |")
+                     f"{pct(r.get('mnist_handwritten'))} | {pct(r.get('synthetic_handwritten'))} | "
+                     f"{pct(r['test_grid_acc'])} | {pct(r['test_solution'])} | {pct(r['test_solution_correct'])} | "
+                     f"{pct(r.get('synthetic_solution'))} | {pct(r.get('samples_solution'))} |")
     lines += ["", "## Tìm lưới", "", "| Nhị phân hoá | Tìm thấy lưới | IoU trung bình | IoU > 0,9 |", "|---|---|---|---|"]
     for g in grid_rows:
         lines.append(f"| {g['method']} | {pct(g['grid_found_rate'])} | {g['grid_iou_mean']:.3f} | "

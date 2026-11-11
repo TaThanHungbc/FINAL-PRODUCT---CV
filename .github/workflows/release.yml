@@ -27,7 +27,10 @@ jobs:
           .venv\Scripts\python -m pip install -r requirements.txt
 
       - name: Tải dữ liệu
-        run: .venv\Scripts\python scripts\download_data.py
+        run: |
+          .venv\Scripts\python scripts\download_data.py
+          .venv\Scripts\python scripts\make_synthetic.py --split train
+          .venv\Scripts\python scripts\make_synthetic.py
 
       - name: Train
         run: .venv\Scripts\python scripts\train.py
@@ -36,6 +39,7 @@ jobs:
         run: |
           .venv\Scripts\python scripts\evaluate.py
           .venv\Scripts\python scripts\evaluate.py --folder samples
+          .venv\Scripts\python scripts\evaluate.py --folder data\synthetic_hw
 
       - name: Đóng gói exe
         shell: cmd
